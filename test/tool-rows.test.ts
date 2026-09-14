@@ -4,10 +4,8 @@ import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { DefaultResourceLoader, initTheme } from '@earendil-works/pi-coding-agent'
-import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
-import { beforeAll, expect, it } from 'vitest'
-
-import { composeRow, fit, invocationSummary } from '../src/lib/rows.js'
+import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui'
+import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 
@@ -18,8 +16,7 @@ const theme = {
   fg: (color: string, text: string) => `<${color}>${text}</${color}>`
 }
 
-/** The same theme in real escapes, for the assertions that count columns: the
- *  markers above would be counted as visible text. */
+/** The same theme in real escapes, for the assertions that count columns. */
 const plain = {
   bg: (_color: string, text: string) => `\x1b[48;5;22m${text}\x1b[49m`,
   bold: (text: string) => text,
@@ -37,6 +34,7 @@ type Definition = {
 }
 
 let tools: Map<string, { definition: Definition }>
+let shutdown: (() => void)[]
 
 beforeAll(async () => {
   // keyHint reads pi's live theme when it spells the expand key.
@@ -60,7 +58,6 @@ beforeAll(async () => {
 
   const extension = extensions.find(candidate => basename(candidate.path) === 'tool-rows.ts')!
 
-  // The tools are registered by the session_start handler, so drive it.
   for (const handler of extension.handlers.get('session_start') ?? []) {
     await handler({ type: 'session_start', reason: 'startup' } as never, {
       cwd: root,
@@ -70,33 +67,42 @@ beforeAll(async () => {
   }
 
   tools = extension.tools as unknown as Map<string, { definition: Definition }>
+  shutdown = (extension.handlers.get('session_shutdown') ?? []).map(
+    handler => () => void handler({ type: 'session_shutdown', reason: 'quit' } as never, {} as never)
+  )
 })
+
+afterEach(() => {
+  for (const stop of shutdown ?? []) {
+    stop()
+  }
+})
+
+interface RowOptions {
+  argsComplete?: boolean
+  executionStarted?: boolean
+  expanded?: boolean
+  isError?: boolean
+  isPartial?: boolean
+  paint?: typeof theme | typeof plain
+  result?: unknown
+  state?: Record<string, unknown>
+  width?: number
+}
 
 /** One whole row: the call renderer reads state the result renderer writes, so
  *  both run before either is rendered, exactly as pi's panel does it. */
-function row(
-  name: string,
-  args: unknown,
-  options: {
-    expanded?: boolean
-    isError?: boolean
-    isPartial?: boolean
-    paint?: typeof theme | typeof plain
-    result?: unknown
-    width?: number
-  } = {}
-) {
+function row(name: string, args: unknown, options: RowOptions = {}) {
   const definition = tools.get(name)!.definition
-  // A finished row has both ends of its clock; a running one has only a start.
-  const state: Record<string, unknown> = options.isPartial ? { startedAt: 0 } : { endedAt: 1_200, startedAt: 0 }
-  // Wide enough that nothing truncates: the theme markers below count as
-  // visible columns, and truncation has its own tests.
+  const finished = options.isPartial !== true && options.result !== undefined
+  const state: Record<string, unknown> = options.state ?? (finished ? { endedAt: 1_200, startedAt: 0 } : {})
   const width = options.width ?? 200
+  const paint = options.paint ?? theme
   const context = {
     args,
-    argsComplete: true,
+    argsComplete: options.argsComplete ?? true,
     cwd: root,
-    executionStarted: true,
+    executionStarted: options.executionStarted ?? true,
     expanded: options.expanded ?? false,
     invalidate: () => {},
     isError: options.isError ?? false,
@@ -106,9 +112,6 @@ function row(
     state,
     toolCallId: 'call-1'
   }
-  const paint = options.paint ?? theme
-  // Both slots run before either is rendered, exactly as pi's panel does it, and
-  // each keeps its own `lastComponent`.
   const call = definition.renderCall(args, paint, { ...context, lastComponent: undefined })
   const result =
     options.result === undefined
@@ -120,134 +123,160 @@ function row(
           { ...context, lastComponent: undefined }
         )
 
-  return { call: call.render(width), result: result?.render(width) ?? [] }
+  return { call: call.render(width), result: result?.render(width) ?? [], state }
 }
 
-it.each([
-  ['bash', { command: 'pwd' }, 'pwd'],
-  ['read', { path: 'src/a.ts' }, 'src/a.ts'],
-  ['read', { offset: 40, path: 'src/a.ts' }, 'src/a.ts:40'],
-  ['edit', { edits: [{}], path: 'src/a.ts' }, 'src/a.ts (1 edit)'],
-  ['edit', { edits: [{}, {}], path: 'src/a.ts' }, 'src/a.ts (2 edits)'],
-  ['write', { file_path: '/tmp/x' }, '/tmp/x'],
-  ['ls', {}, ''],
-  ['ls', { limit: 5 }, '.'],
-  ['grep', { pattern: 'TODO' }, 'TODO in .'],
-  ['find', { path: 'src', pattern: '*.ts' }, '*.ts in src'],
-  ['web_fetch', { limit: 3, url: 'https://example.com' }, 'https://example.com'],
-  ['mystery', { count: 7 }, 'count=7']
-])('summarises a %s call', (name, args, expected) => {
-  expect(invocationSummary(name, args)).toBe(expected)
-})
+/** A row as it reads: real escapes gone, the fake theme's markers gone, and
+ *  the panel's one-column inset dropped so expectations start at the gutter. */
+const text = (lines: string[]) =>
+  lines.map(line =>
+    stripTerminalSequences(line)
+      .replace(/<\/?[A-Za-z]+>/g, '')
+      .replace(/^ /, '')
+      .trimEnd()
+  )
 
-it('collapses whitespace and strips what a tool wrote', () => {
-  expect(invocationSummary('bash', { command: 'echo \x1b[31mhi\x1b[0m\n  there' })).toBe('echo hi there')
-})
-
-it('keeps the panel background through a truncation', () => {
-  const long = `\x1b[31m${'x'.repeat(50)}\x1b[39m`
-
-  expect(truncateToWidth(long, 12, '...')).toContain('\x1b[0m')
-  expect(fit(long, 12)).not.toContain('\x1b[0m')
-  expect(fit(long, 12)).toContain('\x1b[39m\x1b[22m')
-})
-
-it('keeps the suffix whole and cuts the invocation instead', () => {
-  const composed = composeRow('x'.repeat(40), '(hint)', 30)
-
-  expect(composed.endsWith(' (hint)')).toBe(true)
-  expect(composed).toContain('...')
-})
-
-it('drops the suffix when the row is too narrow to say anything else', () => {
-  expect(composeRow('x'.repeat(40), '(hint)', 12)).not.toContain('(hint)')
-})
-
-it('folds a finished call into one line with the expand hint', () => {
-  const { call, result } = row('bash', { command: 'pwd' }, { result: { content: [{ text: 'ok', type: 'text' }] } })
-
-  expect(call).toHaveLength(1)
-  expect(call[0]).toContain('<b><text>bash</text></b>')
-  expect(call[0]).toContain('<muted>pwd</muted>')
-  expect(call[0]).toContain('<muted> 1.2s</muted>')
-  expect(call[0]).toContain('to expand')
-  // A successful folded call shows nothing of what it returned.
-  expect(result).toEqual([])
-})
-
-it('drops the expand hint when the row is expanded', () => {
-  const { call } = row('bash', { command: 'pwd' }, { expanded: true, result: { content: [] } })
-
-  expect(call).toHaveLength(1)
-  expect(call[0]).not.toContain('to expand')
-})
-
-it('keeps the first line of a failure under the header', () => {
-  const { result } = row('bash', { command: 'false' }, {
-    isError: true,
-    result: { content: [{ text: 'boom: no such thing\nstack frame\n', type: 'text' }] }
-  })
-
-  expect(result).toEqual([expect.stringContaining('<error>boom: no such thing</error>')])
-})
-
-it('says [no output] when a failure said nothing at all', () => {
-  const { result } = row('bash', { command: 'false' }, { isError: true, result: { content: [] } })
-
-  expect(result).toEqual([expect.stringContaining('<error>[no output]</error>')])
-})
-
-it('shows the last line of a running call as progress', () => {
-  const { call } = row('bash', { command: 'make' }, {
-    isPartial: true,
-    result: { content: [{ text: 'compiling a\ncompiling b\n', type: 'text' }] }
-  })
-
-  expect(call).toHaveLength(2)
-  expect(call[1]).toContain('<muted>compiling b</muted>')
-  // Nothing is over yet, so the row does not offer to expand.
-  expect(call[0]).not.toContain('to expand')
-})
-
-it('tints exactly the rows it fills, edge to edge', () => {
-  const { call, result } = row('bash', { command: 'pwd' }, {
-    paint: plain,
-    result: { content: [{ text: 'ok', type: 'text' }] },
-    width: 40
-  })
-
-  // Pi's own shell pads a row above and below; this panel is its content.
-  expect(call).toHaveLength(1)
-  expect(result).toEqual([])
-  expect(call[0]!.startsWith('\x1b[48;5;22m')).toBe(true)
-  expect(visibleWidth(call[0]!)).toBe(40)
-})
-
-it('tints the header and the expanded result alike', () => {
-  const { call, result } = row('bash', { command: 'pwd' }, {
-    expanded: true,
-    paint: plain,
-    result: { content: [{ text: '/tmp/x', type: 'text' }], details: {} },
-    width: 40
+it('draws a settled read as an icon, a verb and a target', () => {
+  const { call, result } = row('read', { path: 'package.json' }, {
+    result: { content: [{ text: 'a\nb\nc\n', type: 'text' }] }
   })
 
   expect(call).toHaveLength(1)
-  expect(result.length).toBeGreaterThan(0)
-  // One panel, not two: every row of it carries the same background.
-  for (const line of [...call, ...result]) {
-    expect(line.startsWith('\x1b[48;5;22m')).toBe(true)
-    expect(visibleWidth(line)).toBe(40)
-  }
+  expect(call[0]).toContain('<b><success>●</success></b>')
+  expect(call[0]).toContain('<b><toolTitle>Read</toolTitle></b>')
+  expect(call[0]).toContain('<accent>package.json</accent>')
+  expect(text(result)).toEqual(['└ 3 lines loaded • ctrl+o to toggle'])
 })
 
-it('gives a failure two rows and no more', () => {
+it('dims the icon while the arguments are still streaming', () => {
+  const { call } = row('read', { path: 'a' }, { argsComplete: false, executionStarted: false })
+
+  expect(call[0]).toContain('<b><dim>●</dim></b>')
+})
+
+it('spins while the call is in flight and stops when it settles', () => {
+  const { call } = row('bash', { command: 'sleep 1' }, { isPartial: true, result: { content: [] } })
+
+  expect(call[0]).toMatch(/<accent>[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]<\/accent>/)
+})
+
+it('marks a failure with the error colour', () => {
   const { call, result } = row('bash', { command: 'false' }, {
     isError: true,
-    paint: plain,
-    result: { content: [{ text: 'boom', type: 'text' }] },
-    width: 40
+    result: { content: [{ text: 'boom\n\nCommand exited with code 2', type: 'text' }] }
   })
 
-  expect([...call, ...result]).toHaveLength(2)
-  expect(visibleWidth(result[0]!)).toBe(40)
+  expect(call[0]).toContain('<b><error>●</error></b>')
+  expect(text(result)[0]).toContain('└ Exit 2 (2 lines)')
+})
+
+it('flushes the bash trailer to the right edge', () => {
+  const { call } = row('bash', { command: 'pytest -q' }, {
+    paint: plain,
+    result: { content: [{ text: 'a\nb\n', type: 'text' }] },
+    width: 60
+  })
+
+  expect(visibleWidth(call[0]!)).toBe(60)
+  expect(stripTerminalSequences(call[0]!).trimEnd().endsWith('2 lines · 1s')).toBe(true)
+})
+
+it('keeps a bash tail after the command finishes', () => {
+  const { result } = row('bash', { command: 'make' }, {
+    result: { content: [{ text: 'one\ntwo\nthree\n', type: 'text' }] }
+  })
+
+  expect(text(result)).toEqual(['└ Done (3 lines) • ctrl+o to toggle', '  one', '  two', '  three'])
+})
+
+it('shows what a running command has printed so far', () => {
+  const { result } = row('bash', { command: 'make' }, {
+    isPartial: true,
+    result: { content: [{ text: Array.from({ length: 9 }, (_, i) => `line ${i}`).join('\n'), type: 'text' }] }
+  })
+
+  expect(text(result)[0]).toBe('└ ... (4 earlier lines)')
+  expect(text(result).slice(1)).toEqual(['  line 4', '  line 5', '  line 6', '  line 7', '  line 8'])
+})
+
+it('summarises an edit with its counts, a meter and the first changed line', () => {
+  const { result } = row('edit', { edits: [{}], path: 'a.ts' }, {
+    paint: plain,
+    result: {
+      content: [{ text: 'Successfully replaced 1 block(s)', type: 'text' }],
+      details: { firstChangedLine: 88, patch: '--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new\n+extra\n' }
+    },
+    width: 100
+  })
+
+  const line = text(result)[0]!
+
+  expect(line).toContain('└ +2 -1 [')
+  expect(line).toContain('] at line 88')
+})
+
+it('draws the Input and Output frame when expanded', () => {
+  const { call, result } = row('read', { limit: 40, offset: 12, path: 'package.json' }, {
+    expanded: true,
+    result: { content: [{ text: 'one\ntwo\n', type: 'text' }] }
+  })
+
+  expect(call[0]).not.toContain('to toggle')
+
+  const rows = text(result)
+
+  expect(rows[0]).toBe('├ Input')
+  expect(rows[1]).toBe('│ path: package.json')
+  // path leads the human-first order; the rest fall back to alphabetical.
+  expect(rows[2]).toBe('│ limit: 40')
+  expect(rows[3]).toBe('│ offset: 12')
+  expect(rows[4]).toBe('└ Output')
+  expect(rows.slice(5).join('\n')).toContain('one')
+})
+
+it('caps the expanded input and says how much it left out', () => {
+  const args = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`k${i}`, `v${i}`]))
+  const { result } = row('read', args, { expanded: true, result: { content: [{ text: 'x', type: 'text' }] } })
+
+  expect(text(result).filter(line => line.startsWith('│'))).toHaveLength(6)
+  expect(text(result)[6]).toBe('│ … +4 more lines')
+})
+
+it('renders Output alone for a tool called with no arguments', () => {
+  const { result } = row('ls', {}, { expanded: true, result: { content: [{ text: 'a\nb\n', type: 'text' }] } })
+
+  expect(text(result)[0]).toBe('└ Output')
+})
+
+it('paints an expanded card and leaves a collapsed row transparent', () => {
+  const collapsed = row('read', { path: 'a' }, { paint: plain, result: { content: [{ text: 'x', type: 'text' }] } })
+  const opened = row('read', { path: 'a' }, {
+    expanded: true,
+    paint: plain,
+    result: { content: [{ text: 'x', type: 'text' }] }
+  })
+
+  expect(collapsed.call[0]).not.toContain('\x1b[48;5;22m')
+  expect(opened.call[0]!.startsWith('\x1b[48;5;22m')).toBe(true)
+})
+
+it('stops the shared spinner timer when the last pending row settles', () => {
+  vi.useFakeTimers()
+
+  try {
+    const args = { command: 'sleep 1' }
+
+    expect(vi.getTimerCount()).toBe(0)
+
+    const state: Record<string, unknown> = {}
+
+    row('bash', args, { isPartial: true, result: { content: [] }, state })
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+
+    // The same row again, now finished: the wheel and the clock both let go.
+    row('bash', args, { result: { content: [{ text: 'done', type: 'text' }] }, state })
+    expect(vi.getTimerCount()).toBe(0)
+  } finally {
+    vi.useRealTimers()
+  }
 })

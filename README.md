@@ -3,7 +3,8 @@
 pix gives the [pi coding agent](https://pi.dev) the look of the OpenDDE Harness
 TUI: a kaomoji working indicator that shimmers on its own row above the editor
 while a turn runs, a flavour verb picked fresh for each turn, Claude Code's user
-message band, and tool rows folded to one line. It ships the `claude-dark` and `claude-light` themes from
+message band, Claude Code's tool rows, and a line at the end of each turn saying
+what it did. It ships the `claude-dark` and `claude-light` themes from
 [pi-claude-theme](https://github.com/mrzzmrzz/pi-claude-theme), and carries no
 palette of its own: every colour it draws is a theme token. Models, providers,
 tools and keybindings stay pi's own.
@@ -42,13 +43,52 @@ pi -e /absolute/path/to/pix --theme /absolute/path/to/pix/themes --use-theme cla
 
 ## Tool rows
 
-A collapsed tool call is one line: the tool, what it was asked to do, how long
-it took, and the expand key at the right of the row. A successful call's output
-is not shown at all, because the row already says which file was read and the
-file is one key away. A failure keeps its first line, so a tool that failed is
-visible without being expanded first. Press the expand key and pi's own renderer
-draws the result, with its highlighting and its diffs. `/quiet-tools off` gives
-pi's rows back for the session, and `/quiet-tools on` takes them again.
+A tool call is drawn the way Claude Code draws it: a dot, a verb, what the call
+was pointed at, and one line under it saying what came back.
+
+```
+ ● Read src/providers/compat.py
+ └ 412 lines loaded • ctrl+o to toggle
+
+ ● Bash pytest -q tests/                             37 lines · 12s
+ └ Done (37 lines) • ctrl+o to toggle
+   tests/test_stream.py ..........
+   tests/test_wire.py ....
+
+ ● Edit src/tui/row.ts
+ └ +14 -6 [━━━━━━━━━━] at line 88 • ctrl+o to toggle
+```
+
+The dot is a braille spinner while the call is in flight, dim while the model is
+still writing the arguments, and green or red once it is done. Long paths lose
+their middle, never their filename. A running command shows the last few lines
+it printed, and keeps them after it finishes until the assistant answers or
+another tool starts. Bash alone gets its line count and elapsed time on the
+right edge.
+
+Press the expand key and the row becomes a filled card showing what the tool was
+asked and what pi's own renderer makes of the answer, so `edit` still shows pi's
+diff and `read` still shows pi's highlighting:
+
+```
+ ● Read src/tui/row.ts
+ ├ Input
+ │ path: src/tui/row.ts
+ │ offset: 12
+ └ Output
+   …
+```
+
+`/tool-rows off` gives pi's own renderers back for the session, and
+`/tool-rows on` takes them again. A tool another extension has already claimed
+is left alone.
+
+When a turn ran more than one tool, it closes with one muted line saying what it
+did:
+
+```
+ ✻ Ran 4 commands, read 7 files, edited 2 files · 1m 12s
+```
 
 **pix replaces [pi-fold](https://github.com/mrzzmrzz/pi-fold).** Both override
 the same seven built-in tools, and the one that registers last wins, so running

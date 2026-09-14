@@ -15,7 +15,8 @@ it('loads every extension and they register their handlers', async () => {
     additionalExtensionPaths: [
       join(root, 'src/indicator.ts'),
       join(root, 'src/user-band.ts'),
-      join(root, 'src/tool-rows.ts')
+      join(root, 'src/tool-rows.ts'),
+      join(root, 'src/turn-summary.ts')
     ],
     agentDir: mkdtempSync(join(tmpdir(), 'pix-extensions-')),
     cwd: root,
@@ -36,11 +37,23 @@ it('loads every extension and they register their handlers', async () => {
   expect(extensions.map(extension => basename(extension.path)).sort()).toEqual([
     'indicator.ts',
     'tool-rows.ts',
+    'turn-summary.ts',
     'user-band.ts'
   ])
   // Handlers exist only if the factory ran, so this is also the smoke test for
   // everything the three modules import at load time.
   expect(handlers('indicator.ts')).toEqual(['session_start', 'agent_start', 'agent_end', 'session_shutdown'])
   expect(handlers('user-band.ts')).toEqual(['session_start'])
-  expect(handlers('tool-rows.ts')).toEqual(['session_start', 'session_shutdown'])
+  expect(handlers('tool-rows.ts')).toEqual([
+    'session_start',
+    'message_update',
+    'tool_execution_start',
+    'session_shutdown'
+  ])
+  expect(handlers('turn-summary.ts')).toEqual([
+    'agent_start',
+    'tool_execution_start',
+    'tool_execution_end',
+    'agent_end'
+  ])
 })

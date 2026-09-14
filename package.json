@@ -1,7 +1,7 @@
 {
 	"name": "pix",
 	"version": "0.1.0",
-	"description": "OpenDDE Harness' look for the pi coding agent: kaomoji working indicator, flavour verbs, Claude Code's user message band, folded tool rows, and the claude-dark / claude-light themes",
+	"description": "OpenDDE Harness' look for the pi coding agent: kaomoji working indicator, flavour verbs, Claude Code's user message band and tool rows, a turn summary, and the claude-dark / claude-light themes",
 	"keywords": [
 		"pi-package",
 		"pi-extension",
@@ -32,7 +32,8 @@
 		"extensions": [
 			"./src/indicator.ts",
 			"./src/user-band.ts",
-			"./src/tool-rows.ts"
+			"./src/tool-rows.ts",
+			"./src/turn-summary.ts"
 		],
 		"themes": [
 			"./themes"
