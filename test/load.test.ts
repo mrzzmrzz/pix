@@ -16,7 +16,8 @@ it('loads every extension and they register their handlers', async () => {
       join(root, 'src/indicator.ts'),
       join(root, 'src/user-band.ts'),
       join(root, 'src/tool-rows.ts'),
-      join(root, 'src/turn-summary.ts')
+      join(root, 'src/turn-summary.ts'),
+      join(root, 'src/thinking.ts')
     ],
     agentDir: mkdtempSync(join(tmpdir(), 'pix-extensions-')),
     cwd: root,
@@ -36,6 +37,7 @@ it('loads every extension and they register their handlers', async () => {
   expect(errors).toEqual([])
   expect(extensions.map(extension => basename(extension.path)).sort()).toEqual([
     'indicator.ts',
+    'thinking.ts',
     'tool-rows.ts',
     'turn-summary.ts',
     'user-band.ts'
@@ -48,6 +50,12 @@ it('loads every extension and they register their handlers', async () => {
     'session_start',
     'message_update',
     'tool_execution_start',
+    'session_shutdown'
+  ])
+  expect(handlers('thinking.ts')).toEqual([
+    'session_start',
+    'message_update',
+    'message_end',
     'session_shutdown'
   ])
   expect(handlers('turn-summary.ts')).toEqual([

@@ -32,6 +32,7 @@
 		"extensions": [
 			"./src/indicator.ts",
 			"./src/user-band.ts",
+			"./src/thinking.ts",
 			"./src/tool-rows.ts",
 			"./src/turn-summary.ts"
 		],
