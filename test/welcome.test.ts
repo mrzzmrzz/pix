@@ -1,6 +1,10 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import { expect, it } from 'vitest'
 
 import { BLOCK_GLYPHS, renderWord, scaleArt } from '../src/lib/glyphs.js'
+import { VERSION } from '../src/lib/version.js'
 
 it('draws a word as seven rows of blocks and a blank', () => {
   const rows = renderWord('PIX')
@@ -21,4 +25,12 @@ it('draws X symmetrically', () => {
 
   expect(glyph.map(row => [...row].reverse().join(''))).toEqual(glyph)
   expect([...glyph].reverse()).toEqual(glyph)
+})
+
+it('quotes the version in its own manifest', () => {
+  const manifest = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')) as {
+    version: string
+  }
+
+  expect(VERSION).toBe(manifest.version)
 })

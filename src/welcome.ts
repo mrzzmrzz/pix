@@ -1,6 +1,6 @@
 /**
- * The mark the first screen opens with: PIX in block letters, nothing else.
- * Version, key hints and the rest are pi's own header's to say.
+ * The mark the first screen opens with: PIX in block letters and pix's own
+ * version under it. Key hints and the rest are pi's own header's to say.
  *
  * One colour, like Claude Code's own logo, and it is the theme's accent: pix
  * carries no palette of its own. It is a greeting, so it lives above the editor
@@ -14,6 +14,7 @@ import type { Component } from '@earendil-works/pi-tui'
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 
 import { renderWord, scaleArt } from './lib/glyphs.js'
+import { VERSION } from './lib/version.js'
 
 const WIDGET = 'pix-welcome'
 
@@ -34,15 +35,15 @@ class WelcomeMark implements Component {
   render(width: number): string[] {
     if (this.lines === undefined || this.lastWidth !== width) {
       this.lastWidth = width
-      this.lines = this.art(width).map(line => truncateToWidth(line, width))
+      this.lines = [...this.art(width), this.versionLine(), ''].map(line => truncateToWidth(line, width))
     }
 
     return this.lines
   }
 
   /** The wordmark, full size where it fits and halved where it does not. Below
-   *  that there is no drawing worth keeping, and the greeting is simply
-   *  skipped. The blank row `renderWord` ends with keeps it off the editor. */
+   *  that there is no drawing worth keeping, and the version line carries the
+   *  name at every width anyway. */
   private art(width: number): string[] {
     const full = renderWord('PIX')
     const rows = artWidth(full) <= width ? full : scaleArt(full, 2)
@@ -52,6 +53,11 @@ class WelcomeMark implements Component {
     }
 
     return rows.map(row => (row === '' ? row : this.theme.fg('accent', row)))
+  }
+
+  /** `pix v0.1.0`, so the screen says which pix this is. */
+  private versionLine(): string {
+    return this.theme.bold(this.theme.fg('accent', `pix v${VERSION}`))
   }
 }
 
