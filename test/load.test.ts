@@ -14,7 +14,6 @@ it('loads every extension and they register their handlers', async () => {
   const loader = new DefaultResourceLoader({
     additionalExtensionPaths: [
       join(root, 'src/indicator.ts'),
-      join(root, 'src/welcome.ts'),
       join(root, 'src/user-band.ts'),
       join(root, 'src/tool-rows.ts')
     ],
@@ -37,13 +36,11 @@ it('loads every extension and they register their handlers', async () => {
   expect(extensions.map(extension => basename(extension.path)).sort()).toEqual([
     'indicator.ts',
     'tool-rows.ts',
-    'user-band.ts',
-    'welcome.ts'
+    'user-band.ts'
   ])
   // Handlers exist only if the factory ran, so this is also the smoke test for
-  // everything the four modules import at load time.
+  // everything the three modules import at load time.
   expect(handlers('indicator.ts')).toEqual(['session_start', 'agent_start', 'agent_end', 'session_shutdown'])
-  expect(handlers('welcome.ts')).toEqual(['session_start', 'input', 'agent_start', 'session_shutdown'])
   expect(handlers('user-band.ts')).toEqual(['session_start'])
   expect(handlers('tool-rows.ts')).toEqual(['session_start', 'session_shutdown'])
 })
