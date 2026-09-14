@@ -9,10 +9,15 @@
  *
  * Every colour here is a theme token, so the row follows whatever theme is
  * active rather than carrying a palette of its own.
+ *
+ * The row sits above the editor, as Claude Code's does, not inside the editor's
+ * top border where pi's default editor embeds it. A `CustomEditor` with default
+ * options is pi's own switch for that: it keeps the standalone row and changes
+ * nothing else about editing.
  */
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 
-import { keyText } from '@earendil-works/pi-coding-agent'
+import { CustomEditor, keyText } from '@earendil-works/pi-coding-agent'
 
 import { FACES } from './lib/faces.js'
 import { buildFrames } from './lib/frames.js'
@@ -33,6 +38,14 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setWorkingIndicator()
     ctx.ui.setWorkingMessage()
   }
+
+  pi.on('session_start', (_event, ctx) => {
+    // Only when no other extension has supplied an editor: a custom editor
+    // already keeps the standalone row unless it asked to embed the status.
+    if (ctx.hasUI && ctx.ui.getEditorComponent() === undefined) {
+      ctx.ui.setEditorComponent((tui, theme, keybindings) => new CustomEditor(tui, theme, keybindings))
+    }
+  })
 
   pi.on('agent_start', (_event, ctx) => {
     if (!ctx.hasUI) {

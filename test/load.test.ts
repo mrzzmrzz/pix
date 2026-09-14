@@ -40,7 +40,7 @@ it('loads both extensions and they register their handlers', async () => {
   ])
   // Handlers exist only if the factory ran, so this is also the smoke test for
   // everything the two modules import at load time.
-  expect(handlers('indicator.ts')).toEqual(['agent_start', 'agent_end', 'session_shutdown'])
+  expect(handlers('indicator.ts')).toEqual(['session_start', 'agent_start', 'agent_end', 'session_shutdown'])
   expect(handlers('welcome.ts')).toEqual(['session_start', 'input', 'agent_start', 'session_shutdown'])
   expect(handlers('user-band.ts')).toEqual(['session_start'])
 })
