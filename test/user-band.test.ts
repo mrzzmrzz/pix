@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { DefaultResourceLoader, getPackageDir, initTheme } from '@earendil-works/pi-coding-agent'
+import { DefaultResourceLoader, getPackageDir, initTheme, UserMessageComponent } from '@earendil-works/pi-coding-agent'
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui'
 import { beforeAll, expect, it } from 'vitest'
 
@@ -17,10 +17,9 @@ type UserMessageClass = new (
   transformers?: readonly unknown[]
 ) => { render(width: number): string[] }
 
-let UserMessageComponent: UserMessageClass
+const Component = UserMessageComponent as unknown as UserMessageClass
 
 beforeAll(async () => {
-  // The band reads pi's live theme, which pi keeps on globalThis.
   initTheme('dark', false)
 
   const loader = new DefaultResourceLoader({
@@ -34,24 +33,32 @@ beforeAll(async () => {
   })
 
   await loader.reload()
-  expect(loader.getExtensions().errors).toEqual([])
 
-  // Vitest leaves node_modules to Node, so this is pi's own module instance.
-  const module = (await import(
-    pathToFileURL(join(getPackageDir(), 'dist/modes/interactive/components/user-message.js')).href
-  )) as Record<string, unknown>
+  const { errors, extensions } = loader.getExtensions()
 
-  UserMessageComponent = module.UserMessageComponent as UserMessageClass
+  expect(errors).toEqual([])
+
+  // The live theme pi would hand the extension at session_start. The singleton
+  // is not on the package root, so the test reaches it the way pi's own
+  // modules do.
+  const { theme } = (await import(pathToFileURL(join(getPackageDir(), 'dist/modes/interactive/theme/theme.js')).href)) as {
+    theme: unknown
+  }
+  const start = extensions[0]!.handlers.get('session_start')![0]! as (event: unknown, ctx: unknown) => unknown
+
+  await start({ type: 'session_start', reason: 'startup' }, { hasUI: true, ui: { theme, notify: () => {} } })
 })
 
 it('patches the class pi itself renders', () => {
-  const rebuild = (UserMessageComponent as unknown as { prototype: { rebuild: () => void } }).prototype.rebuild
+  // The test's own import and pi's alias for the extension both resolve to
+  // the package's dist/index.js, so this prototype is the one pi renders with.
+  const rebuild = (Component as unknown as { prototype: { rebuild: () => void } }).prototype.rebuild
 
   expect(rebuild.name).toBe('pixUserBandRebuild')
 })
 
 it('draws one tinted row per line of text and nothing else', () => {
-  const lines = new UserMessageComponent('hello\nworld', undefined, 1, []).render(40)
+  const lines = new Component('hello\nworld', undefined, 1, []).render(40)
 
   // Pi's own band is four rows here: a padding row, two lines, a padding row.
   expect(lines).toHaveLength(2)
@@ -61,7 +68,7 @@ it('draws one tinted row per line of text and nothing else', () => {
 })
 
 it('wraps onto the gutter rather than the margin', () => {
-  const lines = new UserMessageComponent('aaaa bbbb cccc', undefined, 1, []).render(12)
+  const lines = new Component('aaaa bbbb cccc', undefined, 1, []).render(12)
 
   expect(lines.map(line => visibleWidth(line))).toEqual([12, 12])
   // One cell of outputPad, then the two the glyph and its space occupy.
@@ -69,7 +76,7 @@ it('wraps onto the gutter rather than the margin', () => {
 })
 
 it('echoes markup literally instead of rendering it', () => {
-  const lines = new UserMessageComponent('**bold**', undefined, 1, []).render(40)
+  const lines = new Component('**bold**', undefined, 1, []).render(40)
 
   expect(stripTerminalSequences(lines[0]!).trimEnd()).toBe(' ❯ **bold**')
 })

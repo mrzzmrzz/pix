@@ -2,7 +2,7 @@
 
 pix gives the [pi coding agent](https://pi.dev) the look of the OpenDDE Harness
 TUI: a kaomoji working indicator that shimmers on its own row above the editor
-while a turn runs, a flavour verb picked fresh for each turn, a welcome mark above the editor, and Claude Code's
+while a turn runs, a flavour verb picked fresh for each turn, a PIX mark above the editor at startup, and Claude Code's
 user message band. It ships the `claude-dark` and `claude-light` themes from
 [pi-claude-theme](https://github.com/mrzzmrzz/pi-claude-theme), and carries no
 palette of its own: every colour it draws is a theme token. Models, providers,
