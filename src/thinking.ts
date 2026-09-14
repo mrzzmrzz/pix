@@ -21,7 +21,10 @@ import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import type { Component, MouseRegionHandler } from '@earendil-works/pi-tui'
 
-import { AssistantMessageComponent, VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { AssistantMessageComponent, getAgentDir, SettingsManager, VERSION as PI_VERSION } from '@earendil-works/pi-coding-agent'
 import { MouseRegion, visibleWidth } from '@earendil-works/pi-tui'
 
 import type { Theme } from '@earendil-works/pi-coding-agent'
@@ -471,10 +474,41 @@ function patchOnce(): boolean {
   }
 }
 
-export default function (pi: ExtensionAPI) {
+/**
+ * Pi's own switch is what pix rides: thinking hidden means pix's collapsed
+ * view, thinking shown means pi's full text, and the toggle key moves between
+ * them. A user who never chose gets it chosen once, in their settings file, so
+ * every later start opens collapsed; a value they set themselves is never
+ * touched. Pi read its copy before pix loaded, so the first session needs the
+ * toggle key or a restart, and session_start says so.
+ */
+export async function adoptHiddenThinking(agentDir = getAgentDir(), cwd = process.cwd()): Promise<boolean> {
+  try {
+    const file = join(agentDir, 'settings.json')
+    const raw: unknown = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {}
+
+    if (raw && typeof raw === 'object' && 'hideThinkingBlock' in raw) {
+      return false
+    }
+
+    const settings = SettingsManager.create(cwd, agentDir)
+
+    settings.setHideThinkingBlock(true)
+    // Saves are queued; the file is the whole point, so wait for it.
+    await settings.flush()
+
+    return true
+  } catch {
+    // A settings file pix cannot read is not pix's to write.
+    return false
+  }
+}
+
+export default async function (pi: ExtensionAPI) {
   // In the factory, because pi awaits it before the TUI mounts and so before
   // any message is rendered.
   const applied = patchOnce()
+  const adopted = applied && (await adoptHiddenThinking())
   let told = false
 
   // Entries are how a duration survives a resume. They render nothing: the
@@ -489,9 +523,16 @@ export default function (pi: ExtensionAPI) {
     tail = undefined
     restore(ctx)
 
-    if (!applied && !told && ctx.hasUI) {
-      told = true
+    if (told || !ctx.hasUI) {
+      return
+    }
+
+    told = true
+
+    if (!applied) {
       ctx.ui.notify(`pix: pi ${PI_VERSION} changed its assistant message component, thoughts left as they are`, 'warning')
+    } else if (adopted) {
+      ctx.ui.notify('pix: thinking blocks now collapse. Press ctrl+t once to collapse them in this session.', 'info')
     }
   })
 

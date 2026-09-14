@@ -120,16 +120,12 @@ When it stops, the whole thought becomes one line:
 A model that streams a reasoning summary title uses that instead of "Thinking",
 and consecutive thoughts with nothing between them add up into one.
 
-This view needs pi's own thinking blocks hidden, so set it once:
-
-```json
-{
-  "hideThinkingBlock": true
-}
-```
-
-pi's thinking toggle (`ctrl+t` by default) still shows the full text, drawn by
-pi; pix only draws the collapsed form.
+This rides pi's own switch: thinking hidden is pix's collapsed view, thinking
+shown is pi's full text, and pi's toggle (`ctrl+t` by default) moves between
+them. If you never set `hideThinkingBlock`, pix sets it to `true` in your
+settings the first time it runs and tells you; press `ctrl+t` once in that
+session, and every later start opens collapsed. A value you set yourself is
+never touched.
 
 ## What is patched
 

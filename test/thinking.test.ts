@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -7,6 +7,7 @@ import { AssistantMessageComponent, DefaultResourceLoader, initTheme } from '@ea
 import { stripTerminalSequences } from '@earendil-works/pi-tui'
 import { beforeAll, expect, it } from 'vitest'
 
+import { adoptHiddenThinking } from '../src/thinking.js'
 import {
   estimateThought,
   formatThought,
@@ -285,4 +286,21 @@ it('adds up consecutive thinking-only messages and draws them once', async () =>
 
 it('keeps a bold title out of the preview, since it is the heading', () => {
   expect(previewLines('**Checking the wire**\nfirst line\nsecond line', 80, 3)).toEqual(['first line', 'second line'])
+})
+
+it('chooses hidden thinking once for a user who never chose', async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'pix-adopt-'))
+
+  expect(await adoptHiddenThinking(agentDir, root)).toBe(true)
+  expect((JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8')) as { hideThinkingBlock: boolean }).hideThinkingBlock).toBe(true)
+  // Now it is chosen, and stays theirs.
+  expect(await adoptHiddenThinking(agentDir, root)).toBe(false)
+})
+
+it('leaves a value the user set alone', async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'pix-adopt-'))
+
+  writeFileSync(join(agentDir, 'settings.json'), '{ "hideThinkingBlock": false }\n')
+  expect(await adoptHiddenThinking(agentDir, root)).toBe(false)
+  expect(readFileSync(join(agentDir, 'settings.json'), 'utf8')).toBe('{ "hideThinkingBlock": false }\n')
 })
