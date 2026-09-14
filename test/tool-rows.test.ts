@@ -4,7 +4,7 @@ import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { DefaultResourceLoader, initTheme } from '@earendil-works/pi-coding-agent'
-import { truncateToWidth } from '@earendil-works/pi-tui'
+import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 import { beforeAll, expect, it } from 'vitest'
 
 import { composeRow, fit, invocationSummary } from '../src/lib/rows.js'
@@ -13,8 +13,17 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 
 /** Marks every painted span, so a row reads back as what it is made of. */
 const theme = {
+  bg: (color: string, text: string) => `<${color}>${text}</${color}>`,
   bold: (text: string) => `<b>${text}</b>`,
   fg: (color: string, text: string) => `<${color}>${text}</${color}>`
+}
+
+/** The same theme in real escapes, for the assertions that count columns: the
+ *  markers above would be counted as visible text. */
+const plain = {
+  bg: (_color: string, text: string) => `\x1b[48;5;22m${text}\x1b[49m`,
+  bold: (text: string) => text,
+  fg: (_color: string, text: string) => text
 }
 
 type Definition = {
@@ -68,7 +77,14 @@ beforeAll(async () => {
 function row(
   name: string,
   args: unknown,
-  options: { expanded?: boolean; isError?: boolean; isPartial?: boolean; result?: unknown; width?: number } = {}
+  options: {
+    expanded?: boolean
+    isError?: boolean
+    isPartial?: boolean
+    paint?: typeof theme | typeof plain
+    result?: unknown
+    width?: number
+  } = {}
 ) {
   const definition = tools.get(name)!.definition
   // A finished row has both ends of its clock; a running one has only a start.
@@ -90,15 +106,18 @@ function row(
     state,
     toolCallId: 'call-1'
   }
-  const call = definition.renderCall(args, theme, context)
+  const paint = options.paint ?? theme
+  // Both slots run before either is rendered, exactly as pi's panel does it, and
+  // each keeps its own `lastComponent`.
+  const call = definition.renderCall(args, paint, { ...context, lastComponent: undefined })
   const result =
     options.result === undefined
       ? undefined
       : definition.renderResult(
           options.result,
           { expanded: context.expanded, isPartial: context.isPartial },
-          theme,
-          context
+          paint,
+          { ...context, lastComponent: undefined }
         )
 
   return { call: call.render(width), result: result?.render(width) ?? [] }
@@ -188,4 +207,47 @@ it('shows the last line of a running call as progress', () => {
   expect(call[1]).toContain('<muted>compiling b</muted>')
   // Nothing is over yet, so the row does not offer to expand.
   expect(call[0]).not.toContain('to expand')
+})
+
+it('tints exactly the rows it fills, edge to edge', () => {
+  const { call, result } = row('bash', { command: 'pwd' }, {
+    paint: plain,
+    result: { content: [{ text: 'ok', type: 'text' }] },
+    width: 40
+  })
+
+  // Pi's own shell pads a row above and below; this panel is its content.
+  expect(call).toHaveLength(1)
+  expect(result).toEqual([])
+  expect(call[0]!.startsWith('\x1b[48;5;22m')).toBe(true)
+  expect(visibleWidth(call[0]!)).toBe(40)
+})
+
+it('tints the header and the expanded result alike', () => {
+  const { call, result } = row('bash', { command: 'pwd' }, {
+    expanded: true,
+    paint: plain,
+    result: { content: [{ text: '/tmp/x', type: 'text' }], details: {} },
+    width: 40
+  })
+
+  expect(call).toHaveLength(1)
+  expect(result.length).toBeGreaterThan(0)
+  // One panel, not two: every row of it carries the same background.
+  for (const line of [...call, ...result]) {
+    expect(line.startsWith('\x1b[48;5;22m')).toBe(true)
+    expect(visibleWidth(line)).toBe(40)
+  }
+})
+
+it('gives a failure two rows and no more', () => {
+  const { call, result } = row('bash', { command: 'false' }, {
+    isError: true,
+    paint: plain,
+    result: { content: [{ text: 'boom', type: 'text' }] },
+    width: 40
+  })
+
+  expect([...call, ...result]).toHaveLength(2)
+  expect(visibleWidth(result[0]!)).toBe(40)
 })

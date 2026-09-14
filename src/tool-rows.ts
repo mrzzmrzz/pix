@@ -14,6 +14,12 @@
  * changes, and nothing here reaches the model: what the tool returned to the
  * conversation was settled before these renderers saw a word of it.
  *
+ * The panel is pix's own shell, declared with `renderShell: "self"`. Pi's
+ * default shell is a `Box` with a row of padding above and below, so a one-line
+ * call is three rows of tint; the Harness panel is exactly as tall as what is in
+ * it. Both slots return a box of their own with the same background, and two
+ * such boxes stack without a seam.
+ *
  * pix and pi-fold override the same seven tools. Run one or the other.
  */
 import type { ExtensionAPI, ToolDefinition as PiToolDefinition, ToolsOptions } from '@earendil-works/pi-coding-agent'
@@ -30,7 +36,7 @@ import {
   keyHint,
   SettingsManager
 } from '@earendil-works/pi-coding-agent'
-import { Container } from '@earendil-works/pi-tui'
+import { Box, Container } from '@earendil-works/pi-tui'
 
 import type { RowTheme } from './lib/rows.js'
 
@@ -120,6 +126,10 @@ class Rows extends Container {
 class CallRows extends Rows {}
 class ResultRows extends Rows {}
 
+/** pix's own panel. A subclass because pi's `edit` renderer returns a `Box` of
+ *  its own, and the two must never be mistaken for each other. */
+class Shell extends Box {}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
 }
@@ -169,6 +179,46 @@ function foldHint(theme: RenderTheme, truncated: boolean): string {
   )
 }
 
+/**
+ * The tint, decided when the row is drawn rather than when it is built.
+ *
+ * The call renderer runs before the result renderer of the same pass, so at
+ * build time it has not yet been told the call is over. Reading the state inside
+ * the paint keeps the two boxes of one panel the same colour in every frame.
+ */
+function shellBg(theme: RenderTheme, state: RowState, context: RenderContext): (text: string) => string {
+  return text =>
+    theme.bg(
+      context.isPartial || state.endedAt === undefined
+        ? 'toolPendingBg'
+        : context.isError
+          ? 'toolErrorBg'
+          : 'toolSuccessBg',
+      text
+    )
+}
+
+/** The slot's own panel: one column of inset, no padding rows, kept across
+ *  renders so the row is not rebuilt on every frame. */
+function shell(context: RenderContext, bg: (text: string) => string): Shell {
+  const box = context.lastComponent instanceof Shell ? context.lastComponent : new Shell(1, 0)
+
+  box.setBgFn(bg)
+
+  return box
+}
+
+/** Put `child` in the box, and only disturb the box when it is a different
+ *  component than the one already there. */
+function mount(box: Shell, child: Component): Shell {
+  if (box.children[0] !== child) {
+    box.clear()
+    box.addChild(child)
+  }
+
+  return box
+}
+
 function renderCall(name: string, args: unknown, theme: RenderTheme, context: RenderContext): Component {
   const state = context.state as RowState
 
@@ -183,7 +233,8 @@ function renderCall(name: string, args: unknown, theme: RenderTheme, context: Re
     arm(state, context.invalidate)
   }
 
-  const component = context.lastComponent instanceof CallRows ? context.lastComponent : new CallRows()
+  const box = shell(context, shellBg(theme, state, context))
+  const component = box.children[0] instanceof CallRows ? box.children[0] : new CallRows()
   const label = invocationSummary(name, asRecord(args))
   const folded = !context.expanded
 
@@ -206,7 +257,7 @@ function renderCall(name: string, args: unknown, theme: RenderTheme, context: Re
     ]
   })
 
-  return component
+  return mount(box, component)
 }
 
 function renderResult(
@@ -227,28 +278,38 @@ function renderResult(
   }
 
   if (options.expanded && base.renderResult) {
-    // Pi's own renderer never expects one of our components in the slot.
-    const delegated = context.lastComponent instanceof ResultRows ? { ...context, lastComponent: undefined } : context
+    // Pi's own renderer expects its own component back in the slot, never ours.
+    // `edit` draws its diff inside a frame of its own — it is the one built-in
+    // that already asked for `renderShell: "self"` — so it is handed back as it
+    // is rather than boxed a second time.
+    const held = context.lastComponent instanceof Shell ? context.lastComponent.children[0] : context.lastComponent
+    const delegated = { ...context, lastComponent: held instanceof ResultRows ? undefined : held }
+    const delegate = base.renderResult(result, options, theme, delegated)
 
-    return base.renderResult(result, options, theme, delegated)
+    return base.renderShell === 'self' ? delegate : mount(shell(context, shellBg(theme, state, context)), delegate)
   }
 
-  const component = context.lastComponent instanceof ResultRows ? context.lastComponent : new ResultRows()
+  const box = shell(context, shellBg(theme, state, context))
+  const held = box.children[0]
+  const component = held instanceof ResultRows ? held : new ResultRows()
 
   if (context.isError) {
     const first = lineOf(resultText(result), 'first') || '[no output]'
 
     component.setLines(width => [fit(theme.fg('error', first), width)])
   } else {
+    // Nothing to say: a box whose child renders no lines renders none either,
+    // so a folded success adds no row to the panel.
     component.setLines(() => [])
   }
 
-  return component
+  return mount(box, component)
 }
 
 function fold(base: ToolDefinition): ToolDefinition {
   return {
     ...base,
+    renderShell: 'self',
     renderCall: (args, theme, context) => renderCall(base.name, args, theme as RenderTheme, context),
     renderResult: (result, options, theme, context) =>
       renderResult(base, result, options, theme as RenderTheme, context)

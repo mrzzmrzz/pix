@@ -30,6 +30,7 @@ const FULL_RESET = /\x1b\[0m/g
 
 /** Only what a row paints, so a test can stand in for pi's theme. */
 export interface RowTheme {
+  bg(color: 'toolErrorBg' | 'toolPendingBg' | 'toolSuccessBg', text: string): string
   bold(text: string): string
   fg(color: 'error' | 'muted' | 'text', text: string): string
 }
