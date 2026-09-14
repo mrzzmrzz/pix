@@ -1,0 +1,118 @@
+# pix overrides a private pi class at runtime, so a pi release can break it
+# without anything in this repository changing. This watches for one, proves
+# pix still works against it, and either opens the bump or files the break.
+# The second job keeps the vendored pi-claude-theme files current the same way.
+name: upstream watch
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - id: versions
+        name: Compare the pin with pi's latest release
+        run: |
+          latest=$(npm view @earendil-works/pi-coding-agent version)
+          pinned=$(node -p "require('./package.json').devDependencies['@earendil-works/pi-coding-agent']")
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          if [ "$latest" = "$pinned" ]; then
+            echo "::notice::pi $pinned is the latest release; nothing to do."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::pi $latest is out; pix pins $pinned."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.versions.outputs.changed == 'true'
+        run: npm ci
+
+      - id: check
+        if: steps.versions.outputs.changed == 'true'
+        continue-on-error: true
+        name: Type-check and test against the new pi
+        run: |
+          npm install --no-save \
+            "@earendil-works/pi-coding-agent@${{ steps.versions.outputs.latest }}" \
+            "@earendil-works/pi-tui@${{ steps.versions.outputs.latest }}"
+          npm run type-check
+          npm test
+
+      - if: steps.versions.outputs.changed == 'true' && steps.check.outcome == 'success'
+        name: Open the bump
+        run: |
+          latest="${{ steps.versions.outputs.latest }}"
+          branch="pi-$latest"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "::notice::branch $branch already exists."
+            exit 0
+          fi
+          git switch -c "$branch"
+          npm install --save-dev --save-exact \
+            "@earendil-works/pi-coding-agent@$latest" "@earendil-works/pi-tui@$latest"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Pin pi $latest"
+          git push -u origin "$branch"
+          gh pr create --head "$branch" --title "Pin pi $latest" \
+            --body "pi $latest is out, and \`npm run type-check\` and \`npm test\` both pass against it."
+
+      - if: steps.versions.outputs.changed == 'true' && steps.check.outcome == 'failure'
+        name: File the break
+        run: |
+          latest="${{ steps.versions.outputs.latest }}"
+          title="pi $latest breaks pix"
+          open=$(gh issue list --state open --limit 100 --json title \
+            --jq "[.[] | select(.title == \"$title\")] | length")
+          if [ "$open" != "0" ]; then
+            echo "::notice::an open issue already tracks pi $latest."
+            exit 0
+          fi
+          gh issue create --title "$title" --body \
+            "\`npm run type-check\` or \`npm test\` failed against pi $latest. Job: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+  themes:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Sync the vendored themes from pi-claude-theme
+        run: npm run sync-themes
+      - name: Open the sync
+        run: |
+          if git diff --quiet -- themes; then
+            echo "::notice::themes match pi-claude-theme main."
+            exit 0
+          fi
+          branch="theme-sync"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "::notice::branch $branch already exists."
+            exit 0
+          fi
+          git switch -c "$branch"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Sync themes from pi-claude-theme"
+          git push -u origin "$branch"
+          gh pr create --head "$branch" --title "Sync themes from pi-claude-theme" \
+            --body "pi-claude-theme's main moved; these are its current claude-dark and claude-light."
