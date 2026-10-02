@@ -49,6 +49,7 @@ jobs:
         name: Type-check and test against the new pi
         run: |
           npm install --no-save \
+            "@earendil-works/pi-agent-core@${{ steps.versions.outputs.latest }}" \
             "@earendil-works/pi-coding-agent@${{ steps.versions.outputs.latest }}" \
             "@earendil-works/pi-tui@${{ steps.versions.outputs.latest }}"
           npm run type-check
@@ -64,7 +65,7 @@ jobs:
             exit 0
           fi
           git switch -c "$branch"
-          npm install --save-dev --save-exact \
+          npm install --save-dev --save-exact "@earendil-works/pi-agent-core@$latest" \
             "@earendil-works/pi-coding-agent@$latest" "@earendil-works/pi-tui@$latest"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
