@@ -60,7 +60,8 @@ jobs:
         run: |
           latest="${{ steps.versions.outputs.latest }}"
           branch="pi-$latest"
-          if [ -n "$(gh pr list --head "$branch" --state all --json number --jq '.[].number')" ]; then
+          if [ -n "$(gh pr list --head "$branch" --state all --json number,headRepositoryOwner \
+            --jq ".[] | select(.headRepositoryOwner.login == \"$GITHUB_REPOSITORY_OWNER\") | .number")" ]; then
             echo "::notice::a pull request for $branch already exists."
             exit 0
           fi
